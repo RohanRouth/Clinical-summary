@@ -35,6 +35,7 @@ RESOURCE_HANDLERS = {
 
 @router.get(
     "/summary/{patient_id}",
+    operation_id="get_patient_summary",
     response_model=PatientSummaryResponse,
     responses={
         404: {"model": ErrorResponse, "description": "Patient not found"},
@@ -124,7 +125,7 @@ async def get_patient_summary(patient_id: str) -> PatientSummaryResponse:
     )
 
 
-@router.get("/resources/{patient_id}")
+@router.get("/resources/{patient_id}", operation_id="get_patient_resources")
 async def get_patient_resources(patient_id: str) -> dict:
     """
     Debug endpoint to fetch raw FHIR resources for a patient.

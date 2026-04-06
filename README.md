@@ -10,6 +10,9 @@ A FastAPI application that generates comprehensive clinical patient summaries by
 - **LLM-Powered Summarization**: Uses OpenAI GPT models to generate clinical narratives
 - **Two-Stage Summarization**: Section-specific summaries combined into a comprehensive final summary
 - **RESTful API**: Clean JSON responses with full OpenAPI documentation
+- **MCP Server (FastApiMCP)**: Exposes the summary endpoint as a Model Context Protocol tool at `/mcp` — compatible with any MCP-aware agent framework (Google ADK, LangGraph, Claude Desktop, etc.)
+- **Google ADK Agent**: Conversational agent that invokes the MCP tool via `gpt-4o-mini` to return clinical summaries in natural language
+- **MCP Inspector Support**: Connect MCP Inspector to `/mcp` for interactive tool discovery and testing
 
 ## Supported FHIR Resources
 
@@ -22,6 +25,8 @@ A FastAPI application that generates comprehensive clinical patient summaries by
 | AllergyIntolerance | Allergies, reactions, criticality |
 
 ## Architecture
+
+### REST API pipeline
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -60,6 +65,24 @@ A FastAPI application that generates comprehensive clinical patient summaries by
 │  JSON RESPONSE                                                   │
 │  { summary, sections, data_availability, processing_time }       │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+### MCP layer (FastApiMCP)
+
+```
+┌──────────────────────────┐     ┌────────────────────────────────┐
+│  MCP Client              │     │  FastAPI process (port 8000)    │
+│  (Google ADK / Inspector │────▶│                                │
+│   / any MCP consumer)    │     │  ┌──────────────────────────┐  │
+│                          │◀────│  │  FastApiMCP              │  │
+└──────────────────────────┘     │  │  auto-generates MCP tool │  │
+       Streamable HTTP            │  │  schema from OpenAPI spec│  │
+       transport at /mcp          │  └──────────┬───────────────┘  │
+                                  │             │ delegates to      │
+                                  │             ▼                   │
+                                  │  GET /api/v1/summary/{id}       │
+                                  │  (REST pipeline above)          │
+                                  └────────────────────────────────┘
 ```
 
 ## Installation
@@ -180,6 +203,60 @@ curl http://localhost:8000/api/v1/resources/{patient_id}
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 
+## MCP Server (FastApiMCP)
+
+[`fastapi-mcp`](https://github.com/tadata-org/fastapi-mcp) introspects the FastAPI OpenAPI schema and auto-generates a [Model Context Protocol](https://modelcontextprotocol.io/) server — no separate process or port required.
+
+### How it is wired in (`app/main.py`)
+
+```python
+from fastapi_mcp import FastApiMCP
+
+mcp = FastApiMCP(
+    app,
+    include_operations=["get_patient_summary", "get_patient_resources"],
+)
+mcp.mount_http()   # mounts Streamable HTTP MCP server at /mcp
+```
+
+`include_operations` selects routes by their FastAPI `operation_id`. The MCP tool schema (name, description, input JSON Schema) is derived automatically from each route's OpenAPI definition. `.mount_http()` attaches the MCP server to the existing FastAPI app at `/mcp`.
+
+### Exposed MCP tools
+
+| Tool name | Maps to | Description |
+|---|---|---|
+| `get_patient_summary` | `GET /api/v1/summary/{patient_id}` | Full structured clinical summary |
+| `get_patient_resources` | `GET /api/v1/resources/{patient_id}` | Raw extracted FHIR data |
+
+### Testing with MCP Inspector
+
+```bash
+# Install MCP Inspector (requires Node.js / npx)
+npx @modelcontextprotocol/inspector
+```
+
+1. Set transport type to **Streamable HTTP**
+2. Enter server URL: `http://localhost:8000/mcp`
+3. Click **Connect** → **List Tools** — confirm `get_patient_summary` appears
+4. Select the tool, enter `{ "patient_id": "123836453" }`, click **Call**
+
+### Google ADK conversational agent
+
+The `agent/` directory contains a Google ADK agent that wraps the MCP tool:
+
+```bash
+# Terminal 1 — start the API + MCP server
+uvicorn app.main:app --reload --port 8000
+
+# Terminal 2 — start the ADK agent UI
+adk web --port 8001 .
+# Open http://127.0.0.1:8001 and select clinical_summary_agent
+```
+
+Send a message like *"Give me a summary for patient 123836453"* — the agent calls `get_patient_summary` via MCP and returns a formatted clinical narrative. The agent uses `gpt-4o-mini` (via LiteLLM) for tool-use decisions; GPT-4o inside the FastAPI pipeline handles the clinical summarisation.
+
+> **Note:** Restarting the FastAPI server terminates the active MCP session. Restart `adk web` as well if the server is restarted.
+
 ## Project Structure
 
 ```
@@ -190,9 +267,13 @@ Clinical-summary/
 ├── .gitignore
 ├── README.md
 │
+├── agent/
+│   ├── __init__.py             # Re-exports root_agent for adk CLI auto-discovery
+│   └── agent.py                # Google ADK LlmAgent with McpToolset (gpt-4o-mini)
+│
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # FastAPI application factory
+│   ├── main.py                 # FastAPI app factory; mounts FastApiMCP at /mcp
 │   ├── config.py               # Pydantic Settings configuration
 │   │
 │   ├── api/

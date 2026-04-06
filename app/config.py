@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.3
     llm_max_tokens: int = 2000
 
+    # Google ADK / Gemini Configuration
+    google_api_key: str = ""
+
     # Application Settings
     debug: bool = False
     log_level: str = "INFO"

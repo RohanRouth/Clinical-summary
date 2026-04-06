@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi_mcp import FastApiMCP
 
 from app.api.routes import health_router, summary_router
 from app.config import get_settings
@@ -47,6 +48,12 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health_router)
     app.include_router(summary_router)
+
+    mcp = FastApiMCP(
+        app,
+        include_operations=["get_patient_summary", "get_patient_resources"],
+    )
+    mcp.mount_http()
 
     return app
 
